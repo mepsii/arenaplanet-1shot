@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mini Galaxy Platformer</title>
+<style>
+  html, body {
+    margin: 0;
+    overflow: hidden;
+    background: #050617;
+    font-family: system-ui, sans-serif;
+    color: white;
+  }
+
+  canvas {
+    display: block;
+  }
+
+  #help {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: rgba(0,0,0,.35);
+    backdrop-filter: blur(5px);
+    font-size: 14px;
+    user-select: none;
+  }
+</style>
+</head>
+<body>
+<div id="help">
+  A/D or ←/→: move &nbsp; Space: jump &nbsp; R: reset
+</div>
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+let W, H;
+function resize() {
+  W = canvas.width = innerWidth;
+  H = canvas.height = innerHeight;
+}
+addEventListener("resize", resize);
+resize();
+
+const TAU = Math.PI * 2;
+const keys = {};
+
+addEventListener("keydown", e => {
+  keys[e.key.toLowerCase()] = true;
+
+  if ([" ", "arrowleft", "arrowright"].includes(e.key.toLowerCase())) {
+    e.preventDefault();
+  }
+
+  if (e.key.toLowerCase() === "r") reset();
+});
+
+addEventListener("keyup", e => {
+  keys[e.key.toLowerCase()] = false;
+});
+
+const planets = [
+  { x: 0,    y: 0,    r: 125, color: "#3478db" },
+  { x: 330,  y: -95,  r: 72,  color: "#c77d35" },
+  { x: 560,  y: 105,  r: 105, color: "#743ac4" },
+  { x: 900,  y: -80,  r: 62,  color: "#24a986" },
+  { x: 1150, y: 170,  r: 92,  color: "#cf4778" },
+  { x: 1490, y: -65,  r: 115, color: "#cf9b36" }
+];
+
+const stars = Array.from({ length: 240 }, () => ({
+  x: Math.random() * 2200 - 300,
+  y: Math.random() * 1000 - 500,
+  r: Math.random() * 1.7 + .3,
+  a: Math.random() * .8 + .2
+}));
+
+let player;
+
+function reset() {
+  const p = planets[0];
+
+  player = {
+    x: p.x,
+    y: p.y - p.r - 16,
+    vx: 0,
+    vy: 0,
+    radius: 12,
+    grounded: true,
+    currentPlanet: p,
+    jumpLock: false
+  };
+}
+
+reset();
+
+function nearestPlanet() {
+  let best = null;
+  let bestDistance = Infinity;
+
+  for (const p of planets) {
+    const d = Math.hypot(player.x - p.x, player.y - p.y);
+    const surfaceDistance = Math.abs(d - p.r);
+
+    if (surfaceDistance < bestDistance) {
+      bestDistance = surfaceDistance;
+      best = p;
+    }
+  }
+
+  return best;
+}
+
+function update(dt) {
+  const left = keys["a"] || keys["arrowleft"];
+  const right = keys["d"] || keys["arrowright"];
+  const jump = keys[" "] || keys["w"] || keys["arrowup"];
+
+  const planet = nearestPlanet();
+  const dx = player.x - planet.x;
+  const dy = player.y - planet.y;
+  const distance = Math.hypot(dx, dy);
+
+  let nx = dx / distance;
+  let ny = dy / distance;
+
+  // Tangent vector. This is the direction used to walk around a planet.
+  const tx = -ny;
+  const ty = nx;
+
+  const move = (right ? 1 : 0) - (left ? 1 : 0);
+
+  if (player.grounded) {
+    player.vx += tx * move * 900 * dt;
+    player.vy += ty * move * 900 * dt;
+
+    // Strong friction while grounded.
+    player.vx *= Math.pow(.0008, dt);
+    player.vy *= Math.pow(.0008, dt);
+  } else {
+    player.vx += tx * move * 280 * dt;
+    player.vy += ty * move * 280 * dt;
+  }
+
+  // Gravity points toward the center of the nearest planet.
+  const gravity = player.grounded ? 680 : 390;
+  player.vx -= nx * gravity * dt;
+  player.vy -= ny * gravity * dt;
+
+  // Jump away from the planet.
+  if (jump && !player.jumpLock && player.grounded) {
+    const jumpPower = 430;
+
+    player.vx += nx * jumpPower;
+    player.vy += ny * jumpPower;
+
+    player.grounded = false;
+    player.currentPlanet = null;
+    player.jumpLock = true;
+  }
+
+  if (!jump) player.jumpLock = false;
+
+  player.x += player.vx * dt;
+  player.y += player.vy * dt;
+
+  // Collision with the nearest planet.
+  const newDx = player.x - planet.x;
+  const newDy = player.y - planet.y;
+  const newDistance = Math.hypot(newDx, newDy);
+  const minimumDistance = planet.r + player.radius;
+
+  if (newDistance <= minimumDistance && player.vx * newDx + player.vy * newDy < 0) {
+    const px = newDx / newDistance;
+    const py = newDy / newDistance;
+
+    player.x = planet.x + px * minimumDistance;
+    player.y = planet.y + py * minimumDistance;
+
+    // Remove inward velocity, preserving movement along the surface.
+    const inwardVelocity = player.vx * px + player.vy * py;
+    if (inwardVelocity < 0) {
+      player.vx -= px * inwardVelocity;
+      player.vy -= py * inwardVelocity;
+    }
+
+    player.grounded = true;
+    player.currentPlanet = planet;
+  } else {
+    player.grounded = false;
+  }
+
+  // Keep the player from flying forever.
+  if (player.y > 1000 || player.x < -700) reset();
+}
+
+function drawPlanet(p, cameraX, cameraY) {
+  const x = p.x - cameraX;
+  const y = p.y - cameraY;
+
+  // Soft glow.
+  const glow = ctx.createRadialGradient(x, y, p.r * .7, x, y, p.r * 1.7);
+  glow.addColorStop(0, p.color + "44");
+  glow.addColorStop(1, p.color + "00");
+
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(x, y, p.r * 1.7, 0, TAU);
+  ctx.fill();
+
+  // Planet body.
+  const body = ctx.createRadialGradient(
+    x - p.r * .35,
+    y - p.r * .45,
+    p.r * .1,
+    x,
+    y,
+    p.r
+  );
+
+  body.addColorStop(0, "#ffffff55");
+  body.addColorStop(.18, p.color);
+  body.addColorStop(1, "#11142f");
+
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.arc(x, y, p.r, 0, TAU);
+  ctx.fill();
+
+  // Decorative craters.
+  ctx.globalAlpha = .18;
+  ctx.fillStyle = "#111";
+  for (let i = 0; i < 5; i++) {
+    const angle = i * 1.7 + p.x;
+    const cr = p.r * (.08 + (i % 3) * .035);
+    const cx = x + Math.cos(angle) * p.r * .55;
+    const cy = y + Math.sin(angle) * p.r * .55;
+    ctx.beginPath();
+    ctx.arc(cx, cy, cr, 0, TAU);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawPlayer(cameraX, cameraY) {
+  const x = player.x - cameraX;
+  const y = player.y - cameraY;
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Player shadow/glow.
+  ctx.shadowColor = "#79e6ff";
+  ctx.shadowBlur = 18;
+  ctx.fillStyle = "#f8fbff";
+  ctx.beginPath();
+  ctx.arc(0, 0, player.radius, 0, TAU);
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#49b8ff";
+  ctx.beginPath();
+  ctx.arc(-4, -4, 4, 0, TAU);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function draw() {
+  const cameraX = player.x - W * .42;
+  const cameraY = player.y - H * .52;
+
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#050617");
+  bg.addColorStop(1, "#111644");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Parallax stars.
+  for (const s of stars) {
+    const x = s.x - cameraX * .18;
+    const y = s.y - cameraY * .18;
+
+    if (x > -5 && x < W + 5 && y > -5 && y < H + 5) {
+      ctx.globalAlpha = s.a;
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(x, y, s.r, 0, TAU);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  for (const p of planets) {
+    drawPlanet(p, cameraX, cameraY);
+  }
+
+  drawPlayer(cameraX, cameraY);
+}
+
+let last = performance.now();
+
+function loop(now) {
+  const dt = Math.min((now - last) / 1000, .033);
+  last = now;
+
+  update(dt);
+  draw();
+
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
